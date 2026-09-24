@@ -56,7 +56,11 @@
 
 * { box-sizing: border-box; }
 
-html, body { min-height: 100%; }
+html, body {
+  min-height: 100%;
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+}
 
 body {
   margin: 0;

@@ -61,6 +61,7 @@ function shelfGroups(books: Book[]) {
 export function LibraryScreen() {
   const router = useRouter();
   const books = useLibrary((s) => s.books);
+  const seriesList = useLibrary((s) => s.series);
   const progress = useLibrary((s) => s.progress);
   const prefs = useLibrary((s) => s.preferences);
   const setPreferences = useLibrary((s) => s.setPreferences);
@@ -250,13 +251,20 @@ export function LibraryScreen() {
             <div className="mt-6 space-y-8">
               {shelfGroups(visible).map((group) => (
                 <section key={group.key}>
-                  {group.series ? <h3 className="mb-4 font-serif text-lg">{group.series}</h3> : null}
+                  {group.series ? (
+                    <Link href={`/series/${group.books[0]?.seriesId ?? ""}`} className="mb-4 block font-serif text-lg">
+                      {group.series}
+                      <span className="mt-1 block text-xs text-muted">
+                        {seriesList.find((item) => item.id === group.books[0]?.seriesId)?.bookIds.length ?? group.books.length}권
+                      </span>
+                    </Link>
+                  ) : null}
                   {prefs.libraryView === "grid" ? (
                     <ul className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
                       {group.books.map((book) => (
                         <li key={book.id}>
                           <Link href={`/books/${book.id}`} className="group block">
-                            <BookCover title={book.title} author={book.author} cover={book.cover} className="transition duration-300 group-hover:-translate-y-1 group-active:translate-y-0" />
+                            <BookCover title={book.title} author={book.author} cover={book.cover} coverSettings={book.coverSettings} className="transition duration-300 group-hover:-translate-y-1 group-active:translate-y-0" />
                             <p className="mt-3 line-clamp-2 font-serif leading-snug">{book.title}</p>
                             <p className="mt-1 text-xs text-muted">{book.seriesTitle ? `${book.seriesPart}부` : book.author}</p>
                             <p className="mt-2 text-xs text-muted">
@@ -271,7 +279,7 @@ export function LibraryScreen() {
                       {group.books.map((book) => (
                         <li key={book.id}>
                           <Link href={`/books/${book.id}`} className="flex items-center gap-4 py-4">
-                            <BookCover title={book.title} author={book.author} cover={book.cover} className="w-14 shrink-0" />
+                            <BookCover title={book.title} author={book.author} cover={book.cover} coverSettings={book.coverSettings} className="w-14 shrink-0" />
                             <div className="min-w-0">
                               <p className="truncate font-serif text-lg">{book.title}</p>
                               <p className="text-sm text-muted">{book.seriesTitle ? `${book.seriesPart}부` : book.author}</p>

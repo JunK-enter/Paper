@@ -1,7 +1,17 @@
 "use client";
 
-import type { Cover, CoverMotif } from "@/types/models";
+import type { Cover, CoverMotif, CoverSettings } from "@/types/models";
 import { coverForTitle, presetById } from "@/lib/covers";
+
+function decorationMotif(decoration: CoverSettings["decoration"]): CoverMotif {
+  if (decoration === "diamond") return "diamond";
+  if (decoration === "curve") return "wave";
+  if (decoration === "circle") return "seal";
+  if (decoration === "constellation") return "dots";
+  if (decoration === "geometry") return "grid";
+  if (decoration === "none") return "rule";
+  return "rule";
+}
 
 function Motif({ motif, color }: { motif: CoverMotif; color: string }) {
   const common = { fill: "none", stroke: color, strokeWidth: 1 };
@@ -57,15 +67,32 @@ function Motif({ motif, color }: { motif: CoverMotif; color: string }) {
   return <div className="h-px w-10" style={{ background: color }} />;
 }
 
+const titleSizeClass = { sm: "text-[0.82rem]", md: "text-[0.95rem] sm:text-[1.05rem]", lg: "text-[1.15rem] sm:text-[1.3rem]" };
+const fontStack = {
+  literata: "var(--font-literata), var(--font-serif-kr), serif",
+  "serif-kr": "var(--font-serif-kr), serif",
+  lora: "var(--font-lora), var(--font-serif-kr), serif",
+  sans: "var(--font-geist), var(--font-sans-kr), sans-serif",
+};
+const positionClass: Record<CoverSettings["titlePosition"], string> = {
+  "top-left": "justify-start items-start text-left",
+  "top-center": "justify-start items-center text-center",
+  center: "justify-center items-center text-center",
+  "bottom-left": "justify-end items-start text-left",
+  "bottom-center": "justify-end items-center text-center",
+};
+
 export function BookCover({
   title,
   author,
   cover,
+  coverSettings,
   className = "",
 }: {
   title: string;
   author: string;
   cover: Cover;
+  coverSettings?: CoverSettings;
   className?: string;
 }) {
   const picked = coverForTitle(title);
@@ -74,6 +101,26 @@ export function BookCover({
   const bg = cover.kind === "upload" ? "#1c1b19" : preset.bg;
   const fg = preset.fg;
   const accent = preset.accent;
+  if (coverSettings && cover.kind !== "upload") {
+    const background = coverSettings.backgroundType === "gradient"
+      ? `linear-gradient(160deg, ${coverSettings.gradientStart ?? coverSettings.backgroundColor}, ${coverSettings.gradientEnd ?? coverSettings.backgroundColor})`
+      : coverSettings.backgroundColor;
+    return (
+      <div className={`relative aspect-[2/3] overflow-hidden shadow-[0_12px_28px_rgba(37,35,31,0.12)] ${className}`} style={{ background, color: "#f4efe6", borderRadius: 3 }}>
+        <div className="relative flex h-full flex-col p-[10%] paper-grain" style={{ background, opacity: 1 }}>
+          <div className="pointer-events-none absolute inset-0" style={{ opacity: coverSettings.textureStrength }} />
+          {coverSettings.decoration !== "none" ? <Motif motif={decorationMotif(coverSettings.decoration)} color={coverSettings.decorationColor} /> : null}
+          <div className={`relative z-[1] flex h-full flex-col ${positionClass[coverSettings.titlePosition]}`}>
+            {coverSettings.showAuthor && coverSettings.authorPosition === "above" ? <p className="mb-2 text-[10px] tracking-[0.14em] opacity-70">{author || "작자 미상"}</p> : null}
+            <p className={`font-serif leading-tight tracking-[-0.03em] ${titleSizeClass[coverSettings.titleSize]} ${coverSettings.titleAlign === "center" ? "text-center" : "text-left"}`} style={{ fontFamily: fontStack[coverSettings.fontFamily], color: "#f7f3ea" }}>
+              {title || "무제"}
+            </p>
+            {coverSettings.showAuthor && coverSettings.authorPosition !== "above" ? <p className="mt-2 text-[10px] tracking-[0.14em] opacity-70">{author || "작자 미상"}</p> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

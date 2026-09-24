@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 export default function Template({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  if (pathname.includes("/read")) return <div className="page-surface min-h-dvh">{children}</div>;
   return (
     <motion.div
       key={pathname}

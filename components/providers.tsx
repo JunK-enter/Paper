@@ -51,6 +51,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
     const svc = firebaseServices();
     if (!svc) {
       void boot();
+      // Auth is already resolved when Firebase services are missing.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAuthReady(true);
       return;
     }

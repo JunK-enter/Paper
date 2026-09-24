@@ -5,6 +5,8 @@ import type {
   LibraryExport,
   Preferences,
   ReadingProgress,
+  SavedQuote,
+  Series,
 } from "@/types/models";
 import { LOCAL_USER_ID } from "@/types/models";
 import { getDb, loadPrefs, savePrefs } from "@/lib/storage/db";
@@ -28,7 +30,7 @@ export async function saveBook(book: Book) {
 export async function deleteBook(bookId: string) {
   const db = await getDb();
   const tx = db.transaction(
-    ["books", "chapters", "progress", "bookmarks"],
+    ["books", "chapters", "progress", "bookmarks", "quotes"],
     "readwrite",
   );
   await tx.objectStore("books").delete(bookId);
@@ -41,6 +43,8 @@ export async function deleteBook(bookId: string) {
       .filter((m) => m.bookId === bookId)
       .map((m) => tx.objectStore("bookmarks").delete(m.id)),
   );
+  const quotes = await tx.objectStore("quotes").index("by-book").getAll(bookId);
+  await Promise.all(quotes.map((quote) => tx.objectStore("quotes").delete(quote.id)));
   await tx.done;
 }
 
@@ -127,47 +131,88 @@ export async function deleteBookmark(id: string) {
   await db.delete("bookmarks", id);
 }
 
+export async function listSeries(userId: string): Promise<Series[]> {
+  const db = await getDb();
+  return db.getAllFromIndex("series", "by-user", userId);
+}
+
+export async function saveSeries(series: Series) {
+  const db = await getDb();
+  await db.put("series", series);
+}
+
+export async function deleteSeries(id: string) {
+  const db = await getDb();
+  await db.delete("series", id);
+}
+
+export async function listQuotes(userId: string): Promise<SavedQuote[]> {
+  const db = await getDb();
+  const rows = await db.getAllFromIndex("quotes", "by-user", userId);
+  return rows.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function saveQuote(quote: SavedQuote) {
+  const db = await getDb();
+  await db.put("quotes", quote);
+}
+
+export async function deleteQuote(id: string) {
+  const db = await getDb();
+  await db.delete("quotes", id);
+}
+
 export async function exportLibrary(userId: string): Promise<LibraryExport> {
-  const [books, progress, bookmarks, prefs] = await Promise.all([
+  const [books, progress, bookmarks, prefs, series, quotes] = await Promise.all([
     listBooks(userId),
     listProgress(userId),
     listBookmarks(userId),
     loadPrefs(userId),
+    listSeries(userId),
+    listQuotes(userId),
   ]);
   const chapters: Chapter[] = [];
   for (const book of books) {
     chapters.push(...(await listChapters(book.id)));
   }
-  void prefs;
-  return {
-    format: "paper-library",
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    books,
-    chapters,
-    progress,
-    bookmarks,
-  };
+  const { buildBackup } = await import("@/lib/backup");
+  return buildBackup({ books, chapters, progress, bookmarks, series, quotes, preferences: prefs });
 }
 
-export async function importLibrary(userId: string, data: LibraryExport) {
-  if (data.format !== "paper-library" || data.version !== 1) {
-    throw new Error("지원하지 않는 서재 파일입니다.");
+export async function importLibrary(userId: string, data: LibraryExport, mode: "merge" | "replace" = "merge") {
+  const { migrateBackup } = await import("@/lib/backup");
+  const backup = migrateBackup(data);
+  const db = await getDb();
+  if (mode === "replace") {
+    const [books, series, quotes, bookmarks, progress] = await Promise.all([
+      listBooks(userId),
+      listSeries(userId),
+      listQuotes(userId),
+      listBookmarks(userId),
+      listProgress(userId),
+    ]);
+    for (const book of books) await deleteBook(book.id);
+    for (const item of series) await db.delete("series", item.id);
+    for (const quote of quotes) await db.delete("quotes", quote.id);
+    for (const mark of bookmarks) await db.delete("bookmarks", mark.id);
+    for (const row of progress) await db.delete("progress", row.bookId);
   }
-  for (const book of data.books) {
-    await saveBook({ ...book, userId });
+  for (const book of backup.books) await saveBook({ ...book, userId });
+  for (const chapter of backup.chapters) await db.put("chapters", { ...chapter, userId });
+  for (const progress of backup.progress) {
+    if (mode === "merge") {
+      const local = await db.get("progress", progress.bookId);
+      const { mergeReadingProgress } = await import("@/lib/sync/conflicts");
+      const merged = mergeReadingProgress(local, { ...progress, userId }) ?? { ...progress, userId };
+      await db.put("progress", merged);
+    } else {
+      await db.put("progress", { ...progress, userId });
+    }
   }
-  for (const chapter of data.chapters) {
-    const db = await getDb();
-    await db.put("chapters", { ...chapter, userId });
-  }
-  for (const progress of data.progress) {
-    const db = await getDb();
-    await db.put("progress", { ...progress, userId });
-  }
-  for (const mark of data.bookmarks) {
-    await saveBookmark({ ...mark, userId });
-  }
+  for (const mark of backup.bookmarks) await saveBookmark({ ...mark, userId });
+  for (const series of backup.series ?? []) await saveSeries({ ...series, userId });
+  for (const quote of backup.quotes ?? []) await saveQuote({ ...quote, userId });
+  if (backup.preferences) await savePrefs(userId, backup.preferences);
 }
 
 export async function readPreferences(userId: string): Promise<Preferences> {

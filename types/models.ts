@@ -22,6 +22,28 @@ export interface Cover {
   imageDataUrl?: string;
 }
 
+export type CoverTitlePosition = "top-left" | "top-center" | "center" | "bottom-left" | "bottom-center";
+export type CoverDecoration = "none" | "diamond" | "line" | "curve" | "circle" | "constellation" | "geometry";
+export type CoverFont = "literata" | "serif-kr" | "lora" | "sans";
+export type CoverTitleSize = "sm" | "md" | "lg";
+
+export interface CoverSettings {
+  backgroundType: "solid" | "gradient";
+  backgroundColor: string;
+  gradientStart?: string;
+  gradientEnd?: string;
+  textureStrength: number;
+  titlePosition: CoverTitlePosition;
+  decoration: CoverDecoration;
+  decorationColor: string;
+  fontFamily: CoverFont;
+  titleSize: CoverTitleSize;
+  titleAlign: "left" | "center";
+  showAuthor: boolean;
+  authorPosition: "below" | "above";
+  accentColor: string;
+}
+
 export interface Book {
   id: string;
   userId: string;
@@ -30,8 +52,12 @@ export interface Book {
   genre: string;
   seriesTitle?: string;
   seriesPart?: number;
+  seriesId?: string;
+  volumeNumber?: number;
+  volumeLabel?: string;
   description: string;
   cover: Cover;
+  coverSettings?: CoverSettings;
   status: ReadingStatus;
   archived: boolean;
   chapterCount: number;
@@ -64,6 +90,38 @@ export interface ReadingProgress {
   completedChapterIds: string[];
   overallProgress: number;
   lastReadAt: number;
+  updatedAt?: number;
+  deviceId?: string;
+}
+
+export interface Series {
+  id: string;
+  userId: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  cover?: Cover;
+  bookIds: string[];
+  createdAt: number;
+  updatedAt: number;
+  lastOpenedAt: number | null;
+}
+
+export interface SavedQuote {
+  id: string;
+  userId: string;
+  bookId: string;
+  bookTitle: string;
+  chapterId: string;
+  chapterTitle: string;
+  seriesId?: string;
+  seriesTitle?: string;
+  text: string;
+  note?: string;
+  anchorParagraph: number;
+  anchorOffset: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Bookmark {
@@ -92,12 +150,17 @@ export interface Preferences {
 
 export interface LibraryExport {
   format: "paper-library";
-  version: 1;
+  version: 1 | 2;
+  schemaVersion?: 1 | 2;
   exportedAt: string;
+  appVersion?: string;
   books: Book[];
   chapters: Chapter[];
   progress: ReadingProgress[];
   bookmarks: Bookmark[];
+  series?: Series[];
+  quotes?: SavedQuote[];
+  preferences?: Preferences;
 }
 
 export const LOCAL_USER_ID = "local";

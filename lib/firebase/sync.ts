@@ -14,18 +14,24 @@ import type {
   Chapter,
   Preferences,
   ReadingProgress,
+  SavedQuote,
+  Series,
 } from "@/types/models";
 import {
   getBook,
+  getProgress,
   listBookmarks,
   listBooks,
   listChapters,
   listProgress,
+  listQuotes,
+  listSeries,
   saveBook,
   saveBookmark,
-  saveChapter,
-  getProgress,
+  saveQuote,
+  saveSeries,
 } from "@/lib/storage/repo";
+import { mergeReadingProgress } from "@/lib/sync/conflicts";
 import { getDb, loadPrefs, savePrefs } from "@/lib/storage/db";
 
 function services() {
@@ -63,11 +69,13 @@ async function pullCollection<T>(path: string): Promise<T[]> {
 export async function pullLibrary(userId: string) {
   const svc = services();
   if (!svc) return;
-  const [books, chapters, progress, bookmarks] = await Promise.all([
+  const [books, chapters, progress, bookmarks, series, quotes] = await Promise.all([
     pullCollection<Book>(`users/${userId}/books`),
     pullCollection<Chapter>(`users/${userId}/chapters`),
     pullCollection<ReadingProgress>(`users/${userId}/progress`),
     pullCollection<Bookmark>(`users/${userId}/bookmarks`),
+    pullCollection<Series>(`users/${userId}/series`),
+    pullCollection<SavedQuote>(`users/${userId}/quotes`),
   ]);
   const profile = await getDoc(doc(svc.db, "users", userId));
   if (profile.exists()) {
@@ -90,9 +98,16 @@ export async function pullLibrary(userId: string) {
   }
   for (const row of progress) {
     const local = await getProgress(row.bookId);
-    if (!local || row.lastReadAt >= local.lastReadAt) {
-      await db.put("progress", row);
-    }
+    const merged = mergeReadingProgress(local, row);
+    if (merged) await db.put("progress", merged);
+  }
+  for (const item of series) {
+    const local = await db.get("series", item.id);
+    if (!local || item.updatedAt >= local.updatedAt) await saveSeries(item);
+  }
+  for (const quote of quotes) {
+    const local = await db.get("quotes", quote.id);
+    if (!local || quote.updatedAt >= local.updatedAt) await saveQuote(quote);
   }
   for (const mark of bookmarks) {
     await saveBookmark(mark);
@@ -102,13 +117,23 @@ export async function pullLibrary(userId: string) {
 export async function pushLibrary(userId: string) {
   const svc = services();
   if (!svc) return;
-  const [books, progress, bookmarks] = await Promise.all([
+  const [books, progress, bookmarks, series, quotes] = await Promise.all([
     listBooks(userId),
     listProgress(userId),
     listBookmarks(userId),
+    listSeries(userId),
+    listQuotes(userId),
   ]);
   const chapters: Chapter[] = [];
   for (const book of books) chapters.push(...(await listChapters(book.id)));
+  const mergedProgress: ReadingProgress[] = [];
+  for (const row of progress) {
+    const remoteSnap = await getDoc(doc(svc.db, `users/${userId}/progress`, row.bookId));
+    const remote = remoteSnap.exists() ? (remoteSnap.data() as ReadingProgress) : undefined;
+    const merged = mergeReadingProgress(row, remote) ?? row;
+    mergedProgress.push(merged);
+    if (merged !== row) await getDb().then((db) => db.put("progress", merged));
+  }
 
   const batchSize = 400;
   const ops: Array<() => Promise<void>> = [];
@@ -118,10 +143,12 @@ export async function pushLibrary(userId: string) {
   for (const book of books) await queue(`users/${userId}/books`, book.id, book);
   for (const chapter of chapters)
     await queue(`users/${userId}/chapters`, chapter.id, chapter);
-  for (const row of progress)
+  for (const row of mergedProgress)
     await queue(`users/${userId}/progress`, row.bookId, row);
   for (const mark of bookmarks)
     await queue(`users/${userId}/bookmarks`, mark.id, mark);
+  for (const item of series) await queue(`users/${userId}/series`, item.id, item);
+  for (const quote of quotes) await queue(`users/${userId}/quotes`, quote.id, quote);
 
   for (let i = 0; i < ops.length; i += batchSize) {
     const slice = ops.slice(i, i + batchSize);
@@ -133,7 +160,7 @@ export async function pushLibrary(userId: string) {
 
 export async function syncDocument(
   userId: string,
-  kind: "books" | "chapters" | "progress" | "bookmarks",
+  kind: "books" | "chapters" | "progress" | "bookmarks" | "series" | "quotes",
   id: string,
   data: object | null,
 ) {

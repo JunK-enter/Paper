@@ -6,12 +6,18 @@ import type {
   LibraryExport,
   Preferences,
   ReadingProgress,
+  SavedQuote,
+  Series,
 } from "@/types/models";
 import { LOCAL_USER_ID, defaultPreferences } from "@/types/models";
 import * as repo from "@/lib/storage/repo";
 import { emptyProgress } from "@/lib/reading/progress";
 import { syncDocument } from "@/lib/firebase/sync";
+import { deviceId } from "@/lib/sync/conflicts";
+import { linkBooksToSeries } from "@/lib/normalize";
 import { uid } from "@/lib/utils";
+
+export type SyncStatus = "synced" | "syncing" | "offline" | "pending";
 
 interface LibraryState {
   ready: boolean;
@@ -21,8 +27,11 @@ interface LibraryState {
   chapters: Record<string, Chapter[]>;
   progress: Record<string, ReadingProgress>;
   bookmarks: Bookmark[];
+  series: Series[];
+  quotes: SavedQuote[];
   preferences: Preferences;
   offline: boolean;
+  syncStatus: SyncStatus;
   boot: () => Promise<void>;
   setUser: (userId: string, email: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -36,8 +45,13 @@ interface LibraryState {
   touchProgress: (bookId: string, next: ReadingProgress) => Promise<void>;
   addBookmark: (mark: Omit<Bookmark, "id" | "createdAt" | "userId">) => Promise<void>;
   removeBookmark: (id: string) => Promise<void>;
-  importData: (data: LibraryExport) => Promise<void>;
+  importData: (data: LibraryExport, mode?: "merge" | "replace") => Promise<void>;
   exportData: () => Promise<LibraryExport>;
+  saveSeries: (series: Series) => Promise<void>;
+  removeSeries: (id: string) => Promise<void>;
+  saveQuote: (quote: SavedQuote) => Promise<void>;
+  removeQuote: (id: string) => Promise<void>;
+  setSyncStatus: (status: SyncStatus) => void;
 }
 
 let progressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -49,7 +63,10 @@ async function flushProgress() {
   pendingProgress = null;
   const chapters = await repo.listChapters(bookId);
   await repo.saveProgress(value, chapters);
-  void syncDocument(value.userId, "progress", bookId, value).catch(() => undefined);
+  useLibrary.getState().setSyncStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "pending");
+  void syncDocument(value.userId, "progress", bookId, value)
+    .then(() => useLibrary.getState().setSyncStatus("synced"))
+    .catch(() => useLibrary.getState().setSyncStatus(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "pending"));
 }
 
 export const useLibrary = create<LibraryState>((set, get) => ({
@@ -60,24 +77,44 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   chapters: {},
   progress: {},
   bookmarks: [],
+  series: [],
+  quotes: [],
   preferences: defaultPreferences,
   offline: false,
+  syncStatus: "synced",
 
   boot: async () => {
     const userId = get().userId;
-    const [books, progressRows, bookmarks, preferences] = await Promise.all([
+    const [books, progressRows, bookmarks, preferences, seriesRows, quotes] = await Promise.all([
       repo.listBooks(userId),
       repo.listProgress(userId),
       repo.listBookmarks(userId),
       repo.readPreferences(userId),
+      repo.listSeries(userId),
+      repo.listQuotes(userId),
     ]);
+    const linked = linkBooksToSeries(books, seriesRows);
+    for (const series of linked.series) {
+      const previous = seriesRows.find((item) => item.id === series.id);
+      if (!previous || previous.bookIds.join() !== series.bookIds.join() || previous.title !== series.title) {
+        await repo.saveSeries(series);
+      }
+    }
+    for (const book of linked.books) {
+      const previous = books.find((item) => item.id === book.id);
+      if (previous && (previous.seriesId !== book.seriesId || previous.volumeNumber !== book.volumeNumber)) {
+        await repo.saveBook(book);
+      }
+    }
     const progress: Record<string, ReadingProgress> = {};
     for (const row of progressRows) progress[row.bookId] = row;
     set({
       ready: true,
-      books: books.sort((a, b) => (b.lastOpenedAt ?? b.createdAt) - (a.lastOpenedAt ?? a.createdAt)),
+      books: linked.books.sort((a, b) => (b.lastOpenedAt ?? b.createdAt) - (a.lastOpenedAt ?? a.createdAt)),
       progress,
       bookmarks,
+      series: linked.series,
+      quotes,
       preferences,
       offline: typeof navigator !== "undefined" ? !navigator.onLine : false,
     });
@@ -121,12 +158,25 @@ export const useLibrary = create<LibraryState>((set, get) => ({
 
   removeBook: async (bookId) => {
     const userId = get().userId;
+    const chapters = await repo.listChapters(bookId);
+    const quotes = get().quotes.filter((quote) => quote.bookId === bookId);
+    const series = get().series.filter((item) => item.bookIds.includes(bookId));
+    for (const item of series) {
+      const next = { ...item, bookIds: item.bookIds.filter((id) => id !== bookId), updatedAt: Date.now() };
+      await repo.saveSeries(next);
+      void syncDocument(userId, "series", next.id, next).catch(() => undefined);
+    }
     await repo.deleteBook(bookId);
     set((s) => ({
       books: s.books.filter((b) => b.id !== bookId),
       bookmarks: s.bookmarks.filter((m) => m.bookId !== bookId),
+      quotes: s.quotes.filter((quote) => quote.bookId !== bookId),
+      series: s.series.map((item) => item.bookIds.includes(bookId) ? { ...item, bookIds: item.bookIds.filter((id) => id !== bookId) } : item),
     }));
     void syncDocument(userId, "books", bookId, null).catch(() => undefined);
+    void syncDocument(userId, "progress", bookId, null).catch(() => undefined);
+    for (const chapter of chapters) void syncDocument(userId, "chapters", chapter.id, null).catch(() => undefined);
+    for (const quote of quotes) void syncDocument(userId, "quotes", quote.id, null).catch(() => undefined);
   },
 
   upsertChapter: async (chapter) => {
@@ -175,7 +225,7 @@ export const useLibrary = create<LibraryState>((set, get) => ({
           next.completedChapterIds,
         )
       : next.overallProgress;
-    const value = { ...next, overallProgress: overall };
+    const value = { ...next, overallProgress: overall, updatedAt: Date.now(), deviceId: deviceId() };
     set((s) => ({ progress: { ...s.progress, [bookId]: value } }));
     pendingProgress = { bookId, value };
     if (progressTimer) clearTimeout(progressTimer);
@@ -203,12 +253,54 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     void syncDocument(userId, "bookmarks", id, null).catch(() => undefined);
   },
 
-  importData: async (data) => {
-    await repo.importLibrary(get().userId, data);
+  importData: async (data, mode = "merge") => {
+    await repo.importLibrary(get().userId, data, mode);
     await get().boot();
   },
 
   exportData: async () => repo.exportLibrary(get().userId),
+
+  saveSeries: async (series) => {
+    await repo.saveSeries(series);
+    set((s) => {
+      const exists = s.series.some((item) => item.id === series.id);
+      return { series: exists ? s.series.map((item) => (item.id === series.id ? series : item)) : [...s.series, series] };
+    });
+    void syncDocument(series.userId, "series", series.id, series).catch(() => undefined);
+  },
+
+  removeSeries: async (id) => {
+    const userId = get().userId;
+    const series = get().series.find((item) => item.id === id);
+    await repo.deleteSeries(id);
+    const books = get().books.map((book) =>
+      book.seriesId === id ? { ...book, seriesId: undefined, seriesTitle: undefined, seriesPart: undefined, volumeNumber: undefined, volumeLabel: undefined, updatedAt: Date.now() } : book,
+    );
+    for (const book of books) {
+      if (series?.bookIds.includes(book.id)) await repo.saveBook(book);
+    }
+    set({ series: get().series.filter((item) => item.id !== id), books });
+    void syncDocument(userId, "series", id, null).catch(() => undefined);
+  },
+
+  saveQuote: async (quote) => {
+    await repo.saveQuote(quote);
+    set((s) => {
+      const exists = s.quotes.some((item) => item.id === quote.id);
+      const quotes = exists ? s.quotes.map((item) => (item.id === quote.id ? quote : item)) : [quote, ...s.quotes];
+      return { quotes };
+    });
+    void syncDocument(quote.userId, "quotes", quote.id, quote).catch(() => undefined);
+  },
+
+  removeQuote: async (id) => {
+    const userId = get().userId;
+    await repo.deleteQuote(id);
+    set((s) => ({ quotes: s.quotes.filter((item) => item.id !== id) }));
+    void syncDocument(userId, "quotes", id, null).catch(() => undefined);
+  },
+
+  setSyncStatus: (syncStatus) => set({ syncStatus }),
 }));
 
 export async function flushReadingProgress() {

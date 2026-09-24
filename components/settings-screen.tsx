@@ -9,8 +9,10 @@ import { firebaseServices, isFirebaseConfigured } from "@/lib/firebase/client";
 import { mirrorLocalToAccount, pushLibrary } from "@/lib/firebase/sync";
 import { useLibrary } from "@/lib/store";
 import { LOCAL_USER_ID } from "@/types/models";
-import type { LibraryExport, ReadingFont, ReadingMode, ReadingTheme, UiTheme } from "@/types/models";
+import type { ReadingFont, ReadingMode, ReadingTheme, UiTheme } from "@/types/models";
 import { listBooks } from "@/lib/storage/repo";
+import { backupFilename, migrateBackup, previewBackup } from "@/lib/backup";
+import type { LibraryExport as BackupFile } from "@/types/models";
 
 export function SettingsScreen() {
   const prefs = useLibrary((s) => s.preferences);
@@ -24,6 +26,9 @@ export function SettingsScreen() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [localCount, setLocalCount] = useState(0);
+  const syncStatus = useLibrary((s) => s.syncStatus);
+  const setSyncStatus = useLibrary((s) => s.setSyncStatus);
+  const [pendingBackup, setPendingBackup] = useState<BackupFile | null>(null);
 
   useEffect(() => {
     void listBooks(LOCAL_USER_ID).then((books) => setLocalCount(books.length));
@@ -35,16 +40,23 @@ export function SettingsScreen() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "paper-library.json";
+    a.download = backupFilename();
     a.click();
     URL.revokeObjectURL(url);
   }
 
   async function onImport(file: File) {
     const text = await file.text();
-    const data = JSON.parse(text) as LibraryExport;
-    await importData(data);
-    setMessage("서재를 가져왔습니다.");
+    const data = migrateBackup(JSON.parse(text));
+    setPendingBackup(data);
+  }
+
+  async function restore(mode: "merge" | "replace") {
+    if (!pendingBackup) return;
+    if (mode === "replace" && !window.confirm("현재 서재를 백업 내용으로 바꿉니다. 이 기기에만 있는 책은 지워집니다.")) return;
+    await importData(pendingBackup, mode);
+    setPendingBackup(null);
+    setMessage(mode === "replace" ? "백업으로 서재를 바꾸었습니다." : "백업을 현재 서재에 합쳤습니다.");
   }
 
   return (
@@ -89,17 +101,42 @@ export function SettingsScreen() {
             </select>
           </label>
         </Section>
-        <Section title="서재">
-          <Link href="/settings/archive" className="mt-3 inline-block min-h-11 text-sm">보관한 책</Link>
+        <Section title="동기화">
+          <p className="mt-2 text-sm">{offline ? "오프라인" : syncStatus === "syncing" ? "동기화 중…" : syncStatus === "pending" ? "동기화 필요" : "동기화됨"}</p>
+          <p className="mt-1 text-xs text-muted">읽기 위치는 이 기기에 바로 저장되고, 연결되면 계정으로 올라갑니다.</p>
+          {isFirebaseConfigured() ? (
+            <button className="mt-3 block text-sm text-accent" onClick={() => {
+              setSyncStatus("syncing");
+              void pushLibrary(userId).then(() => { setSyncStatus("synced"); setMessage("동기화했습니다."); }).catch(() => { setSyncStatus("pending"); setMessage("동기화하지 못했습니다. 이 기기의 데이터는 안전하게 저장되어 있습니다."); });
+            }}>지금 동기화</button>
+          ) : null}
+        </Section>
+        <Section title="서재 백업">
           <div className="mt-2 flex gap-4 text-sm">
-            <button className="min-h-11" onClick={() => void onExport()}>내보내기</button>
-            <button className="min-h-11" onClick={() => fileRef.current?.click()}>가져오기</button>
+            <button className="min-h-11" onClick={() => void onExport()}>서재 내보내기</button>
+            <button className="min-h-11" onClick={() => fileRef.current?.click()}>백업에서 복원</button>
           </div>
           <input ref={fileRef} type="file" accept="application/json" className="sr-only" onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) void onImport(file).catch(() => setMessage("파일을 읽지 못했습니다."));
+            if (file) void onImport(file).catch(() => setMessage("백업 파일을 읽지 못했습니다."));
+            e.target.value = "";
           }} />
-          <p className="mt-2 text-xs leading-relaxed text-muted">형식은 paper-library 버전 1 JSON입니다. 책, 장, 책갈피, 읽기 위치를 포함합니다.</p>
+          {pendingBackup ? (
+            <div className="mt-4 border-t border-line pt-4 text-sm">
+              <p>책 {previewBackup(pendingBackup).books}권</p>
+              <p>시리즈 {previewBackup(pendingBackup).series}개</p>
+              <p>저장한 문장 {previewBackup(pendingBackup).quotes}개</p>
+              <p className="mt-2 text-muted">백업 날짜 {new Date(pendingBackup.exportedAt).toLocaleDateString("ko-KR")}</p>
+              <div className="mt-3 flex flex-wrap gap-4">
+                <button className="min-h-11 text-accent" onClick={() => void restore("merge")}>현재 서재에 병합</button>
+                <button className="min-h-11 text-muted" onClick={() => void restore("replace")}>현재 서재를 백업으로 교체</button>
+              </div>
+            </div>
+          ) : null}
+        </Section>
+        <Section title="서재">
+          <Link href="/settings/archive" className="mt-3 inline-block min-h-11 text-sm">보관한 책</Link>
+          <p className="mt-2 text-xs leading-relaxed text-muted">백업에는 책, 장, 시리즈, 문장, 표지, 읽기 위치가 들어갑니다.</p>
         </Section>
         <Section title="계정">
           {isFirebaseConfigured() ? (

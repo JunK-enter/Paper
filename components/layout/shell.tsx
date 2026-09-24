@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Library, Settings, Upload } from "lucide-react";
+import { BookOpen, Library, Quote, Settings, Upload } from "lucide-react";
 
 const items = [
   { href: "/", label: "서재", icon: Library },
   { href: "/now", label: "읽는 중", icon: BookOpen },
+  { href: "/quotes", label: "문장", icon: Quote },
   { href: "/books/new", label: "올리기", icon: Upload },
   { href: "/settings", label: "설정", icon: Settings },
 ];
@@ -47,7 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           style={{ viewTransitionName: "paper-nav", paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label="주요"
         >
-          <ul className="grid grid-cols-4">
+          <ul className="grid grid-cols-5">
             {items.map((item) => {
               const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
               const Icon = item.icon;

@@ -35,6 +35,8 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
   const addBookmark = useLibrary((s) => s.addBookmark);
   const removeBookmark = useLibrary((s) => s.removeBookmark);
   const userId = useLibrary((s) => s.userId);
+  const saveQuote = useLibrary((s) => s.saveQuote);
+  const [selection, setSelection] = useState<{ text: string; paragraph: number; offset: number; top: number; left: number } | null>(null);
 
   const scroller = useRef<HTMLDivElement>(null);
   const restored = useRef(false);
@@ -122,6 +124,8 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
       : useLibrary.getState().progress[bookId]?.chapterId === chapterId
         ? useLibrary.getState().progress[bookId]?.anchorParagraph ?? 0
         : 0;
+    // Restore the saved paragraph when the chapter changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAnchor(saved);
     setPage(0);
   }, [bookId, chapterId]);
@@ -135,7 +139,8 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
 
   useEffect(() => {
     if (!chapter || restored.current || prefs.readingMode !== "scroll") return;
-    const query = Number(new URLSearchParams(window.location.search).get("at"));
+    const params = new URLSearchParams(window.location.search);
+    const query = Number(params.get("p") ?? params.get("at"));
     const saved = Number.isFinite(query) && query >= 0
       ? query
       : progress?.chapterId === chapter.id
@@ -184,6 +189,8 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
   useEffect(() => {
     if (prefs.readingMode !== "paginated") return;
     const found = pages.findIndex((group) => group.includes(anchor));
+    // Keep the page aligned with the restored paragraph.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(found === -1 ? 0 : found);
   }, [anchor, pages, prefs.readingMode]);
 
@@ -207,6 +214,8 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
     }
     if (page < pages.length - 1) goPage(page + 1);
     else if (published[index + 1]) router.push(`/books/${bookId}/read/${published[index + 1].id}`);
+    // goPage closes over the latest page state and is recreated each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, index, marksOpen, page, pages.length, prefs.readingMode, published, router, settingsOpen]);
 
   useEffect(() => {
@@ -269,8 +278,10 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
     <div
       data-theme={theme === "dark" ? "dark" : "light"}
       data-reading={theme === "sepia" ? "sepia" : undefined}
-      className="fixed inset-0 bg-paper text-ink"
+      className="fixed inset-0 z-40 h-dvh min-h-dvh w-full bg-paper text-ink"
       style={{
+        height: "100dvh",
+        minHeight: "-webkit-fill-available",
         ["--reading-font" as string]: font.stack,
         ["--reading-size" as string]: `${prefs.fontSize}px`,
         ["--reading-leading" as string]: String(prefs.lineHeight),
@@ -283,11 +294,34 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
         className="relative z-[1] h-full overflow-x-hidden overflow-y-auto bg-paper"
         onClick={onSurfaceClick}
         onTouchStart={onTouchStart}
-        onTouchEnd={onTouchEnd}
+        onTouchEnd={(event) => {
+          onTouchEnd(event);
+          const selected = window.getSelection();
+          const text = selected?.toString().trim() ?? "";
+          if (!text || !selected || selected.rangeCount === 0) return;
+          const node = selected.anchorNode;
+          const block = (node instanceof Element ? node : node?.parentElement)?.closest("[data-block]");
+          const paragraph = Number(block?.getAttribute("data-block") ?? 0);
+          const rect = selected.getRangeAt(0).getBoundingClientRect();
+          setSelection({ text: text.slice(0, 500), paragraph, offset: selected.anchorOffset, top: rect.bottom + 8, left: rect.left });
+        }}
+        onMouseUp={() => {
+          const selected = window.getSelection();
+          const text = selected?.toString().trim() ?? "";
+          if (!text || !selected || selected.rangeCount === 0) {
+            setSelection(null);
+            return;
+          }
+          const node = selected.anchorNode;
+          const block = (node instanceof Element ? node : node?.parentElement)?.closest("[data-block]");
+          const paragraph = Number(block?.getAttribute("data-block") ?? 0);
+          const rect = selected.getRangeAt(0).getBoundingClientRect();
+          setSelection({ text: text.slice(0, 500), paragraph, offset: selected.anchorOffset, top: rect.bottom + 8, left: Math.max(12, rect.left) });
+        }}
       >
         <motion.article
           key={prefs.readingMode === "paginated" ? `${chapter.id}-${page}` : chapter.id}
-          className="relative mx-auto bg-paper px-6 pt-16 pb-28"
+          className="relative mx-auto bg-paper px-6 pb-28 pt-[calc(env(safe-area-inset-top)+4.5rem)]"
           style={{ maxWidth: prefs.readingWidth, width: "100%" }}
           initial={prefs.readingMode === "paginated" ? { x: slide * 42, opacity: 0.92 } : false}
           animate={{ x: 0, opacity: 1 }}
@@ -332,6 +366,37 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
           )}
         </motion.article>
       </div>
+      {selection ? (
+        <div className="fixed z-40 flex gap-3 border border-line bg-paper px-3 py-2 text-sm shadow-[var(--shadow)]" style={{ top: selection.top, left: selection.left }}>
+          <button
+            className="text-accent"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              if (!book || !chapter) return;
+              void saveQuote({
+                id: crypto.randomUUID(),
+                userId,
+                bookId,
+                bookTitle: book.title,
+                chapterId: chapter.id,
+                chapterTitle: chapter.title,
+                seriesId: book.seriesId,
+                seriesTitle: book.seriesTitle,
+                text: selection.text,
+                anchorParagraph: selection.paragraph,
+                anchorOffset: selection.offset,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              });
+              window.getSelection()?.removeAllRanges();
+              setSelection(null);
+            }}
+          >
+            저장
+          </button>
+          <button className="text-muted" onMouseDown={(event) => event.preventDefault()} onClick={() => setSelection(null)}>닫기</button>
+        </div>
+      ) : null}
 
       <div className={`pointer-events-none fixed inset-x-0 top-0 z-20 transition ${chrome ? "opacity-100" : "opacity-0"}`} style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="pointer-events-auto mx-auto flex max-w-3xl items-center justify-between px-3 py-2">

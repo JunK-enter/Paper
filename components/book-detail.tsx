@@ -1,20 +1,27 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/shell";
 import { BookCover } from "@/components/cover";
+import { CoverEditor } from "@/components/cover-editor";
 import { useLibrary } from "@/lib/store";
 import { estimateMinutes, formatDate, percent, readingStatusLabel } from "@/lib/utils";
 import { hasNewChapters } from "@/lib/reading/progress";
 import type { ReadingStatus } from "@/types/models";
 
 export function BookDetail({ bookId }: { bookId: string }) {
+  const router = useRouter();
   const book = useLibrary((s) => s.books.find((b) => b.id === bookId));
   const chapters = useLibrary((s) => s.chapters[bookId]);
   const loadChapters = useLibrary((s) => s.loadChapters);
   const progress = useLibrary((s) => s.progress[bookId]);
   const upsertBook = useLibrary((s) => s.upsertBook);
+  const removeBook = useLibrary((s) => s.removeBook);
+  const allQuotes = useLibrary((s) => s.quotes);
+  const quotes = useMemo(() => allQuotes.filter((quote) => quote.bookId === bookId), [allQuotes, bookId]);
+  const [editingCover, setEditingCover] = useState(false);
 
   useEffect(() => {
     void loadChapters(bookId);
@@ -52,8 +59,23 @@ export function BookDetail({ bookId }: { bookId: string }) {
     <AppShell>
       <main className="mx-auto max-w-3xl px-5 pt-6 sm:px-8">
         <Link href="/" className="text-sm text-muted">서재</Link>
+        {editingCover ? (
+          <div className="mt-6">
+            <CoverEditor
+              title={book.title}
+              author={book.author}
+              cover={book.cover}
+              initial={book.coverSettings}
+              onCancel={() => setEditingCover(false)}
+              onSave={(coverSettings) => {
+                void upsertBook({ ...book, coverSettings, updatedAt: Date.now() });
+                setEditingCover(false);
+              }}
+            />
+          </div>
+        ) : null}
         <div className="mt-6 grid gap-8 sm:grid-cols-[220px_1fr]">
-          <BookCover title={book.title} author={book.author} cover={book.cover} />
+          <BookCover title={book.title} author={book.author} cover={book.cover} coverSettings={book.coverSettings} />
           <div>
             <p className="text-[11px] tracking-[0.16em] text-muted">
               {book.seriesTitle ? `${book.seriesTitle} · 제${book.seriesPart}부` : book.genre || "장르 없음"}
@@ -82,6 +104,16 @@ export function BookDetail({ bookId }: { bookId: string }) {
               <button onClick={() => void upsertBook({ ...book, archived: !book.archived, updatedAt: Date.now() })}>
                 {book.archived ? "보관 해제" : "보관"}
               </button>
+              <button onClick={() => setEditingCover(true)}>표지 편집</button>
+              <button
+                onClick={() => {
+                  if (!window.confirm(`「${book.title}」을 서재에서 지울까요? 본문과 읽기 기록도 함께 지워집니다.`)) return;
+                  void removeBook(book.id).then(() => router.push("/"));
+                }}
+              >
+                이 책 지우기
+              </button>
+              <Link href="/quotes">{`저장한 문장 ${quotes.length}`}</Link>
             </div>
           </div>
         </div>
