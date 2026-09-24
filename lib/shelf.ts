@@ -120,7 +120,15 @@ export async function saveUploadedManuscript(userId: string, filename: string, t
   try {
     await pushLibrary(userId);
   } catch {
-    /* 로컬 서재에는 저장된 상태입니다. */
+    throw new AccountSyncError(book);
   }
   return book;
+}
+
+export class AccountSyncError extends Error {
+  readonly book: Book;
+  constructor(book: Book) {
+    super("계정에 올리지 못했습니다.");
+    this.book = book;
+  }
 }

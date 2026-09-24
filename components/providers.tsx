@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { firebaseServices, isFirebaseConfigured } from "@/lib/firebase/client";
-import { pullLibrary } from "@/lib/firebase/sync";
+import { mirrorLocalToAccount, pullLibrary, pushLibrary } from "@/lib/firebase/sync";
 import { ensureShelvedBook } from "@/lib/shelf";
 import { useLibrary } from "@/lib/store";
 import { LoginScreen } from "@/components/login-screen";
+import { LOCAL_USER_ID } from "@/types/models";
 
 function applyTheme(theme: "light" | "dark" | "system") {
   const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -66,9 +67,19 @@ export function Providers({ children }: { children: React.ReactNode }) {
         try {
           await pullLibrary(user.uid);
         } catch {
-          /* offline reading still uses IndexedDB */
+          /* 오프라인이면 이 브라우저에 저장된 서재를 그대로 보여 줍니다. */
+        }
+        try {
+          await mirrorLocalToAccount(LOCAL_USER_ID, user.uid);
+        } catch {
+          /* 로컬 서재가 없어도 계정 서재는 유지됩니다. */
         }
         await ensureShelvedBook(user.uid);
+        try {
+          await pushLibrary(user.uid);
+        } catch {
+          /* 다음 로그인 때 다시 계정으로 올립니다. */
+        }
         await useLibrary.getState().refresh();
       })();
     });

@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/layout/shell";
-import { saveUploadedManuscript } from "@/lib/shelf";
+import { AccountSyncError, saveUploadedManuscript } from "@/lib/shelf";
 import { importLibrary } from "@/lib/storage/repo";
 import { pushLibrary } from "@/lib/firebase/sync";
 import { useLibrary } from "@/lib/store";
@@ -23,6 +23,7 @@ export function UploadScreen() {
     setMessage("");
     try {
       const saved = [];
+      let syncFailed = false;
       for (const file of files) {
         const text = await file.text();
         const trimmed = text.trim();
@@ -38,9 +39,19 @@ export function UploadScreen() {
             continue;
           }
         }
-        saved.push(await saveUploadedManuscript(userId, file.name, text));
+        try {
+          saved.push(await saveUploadedManuscript(userId, file.name, text));
+        } catch (error) {
+          if (!(error instanceof AccountSyncError)) throw error;
+          saved.push(error.book);
+          syncFailed = true;
+        }
       }
       await refresh();
+      if (syncFailed) {
+        setMessage("이 브라우저에는 저장됐지만 계정에는 아직 올라가지 않았습니다. 같은 계정으로 다시 열면 이어서 동기화됩니다.");
+        return;
+      }
       if (saved.length === 1) router.push(`/books/${saved[0].id}`);
       else router.push("/");
     } catch {
