@@ -61,7 +61,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
   const index = published.findIndex((c) => c.id === chapterId);
   const font = fonts.find((f) => f.id === prefs.fontFamily) ?? fonts[0];
   const pages = useMemo(() => {
-    const lines = Math.max(8, Math.floor((viewport - 168) / (prefs.fontSize * prefs.lineHeight)));
+    const lines = Math.max(6, Math.floor((viewport - 220) / (prefs.fontSize * prefs.lineHeight)));
     const width = Math.min(prefs.readingWidth, typeof window === "undefined" ? 390 : window.innerWidth - 48);
     const charsPerLine = Math.max(16, Math.floor(width / (prefs.fontSize * 0.92)));
     const budget = Math.max(280, lines * charsPerLine);
@@ -131,10 +131,19 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
   }, [bookId, chapterId]);
 
   useEffect(() => {
-    const update = () => setViewport(window.innerHeight);
+    const update = () => {
+      const view = window.visualViewport;
+      setViewport(view?.height ?? window.innerHeight);
+    };
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    window.visualViewport?.addEventListener("resize", update);
+    window.visualViewport?.addEventListener("scroll", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("resize", update);
+      window.visualViewport?.removeEventListener("scroll", update);
+    };
   }, []);
 
   useEffect(() => {
@@ -321,7 +330,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
       >
         <motion.article
           key={prefs.readingMode === "paginated" ? `${chapter.id}-${page}` : chapter.id}
-          className="relative mx-auto bg-paper px-6 pb-28 pt-[calc(env(safe-area-inset-top)+4.5rem)]"
+          className="reader-body relative mx-auto bg-paper px-6"
           style={{ maxWidth: prefs.readingWidth, width: "100%" }}
           initial={prefs.readingMode === "paginated" ? { x: slide * 42, opacity: 0.92 } : false}
           animate={{ x: 0, opacity: 1 }}
@@ -398,7 +407,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
         </div>
       ) : null}
 
-      <div className={`pointer-events-none fixed inset-x-0 top-0 z-20 transition ${chrome ? "opacity-100" : "opacity-0"}`} style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <div className={`reader-top pointer-events-none fixed inset-x-0 top-0 z-20 bg-paper transition ${chrome ? "opacity-100" : "opacity-0"}`}>
         <div className="pointer-events-auto mx-auto flex max-w-3xl items-center justify-between px-3 py-2">
           <button className="grid h-11 w-11 place-items-center" aria-label="책으로" onClick={() => router.push(`/books/${bookId}`)}><ChevronLeft size={20} /></button>
           <p className="truncate px-3 text-sm">{book.title}</p>
@@ -409,7 +418,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
         </div>
       </div>
 
-      <div className={`pointer-events-none fixed inset-x-0 bottom-0 z-20 transition ${chrome ? "opacity-100" : "opacity-0"}`} style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <div className={`reader-bottom pointer-events-none fixed inset-x-0 bottom-0 z-20 bg-paper transition ${chrome ? "opacity-100" : "opacity-0"}`}>
         <div className="pointer-events-auto mx-auto flex max-w-3xl items-center justify-between px-4 py-3 text-sm">
           <button className="min-h-11 disabled:opacity-30" disabled={!prev} onClick={() => prev && router.push(`/books/${bookId}/read/${prev.id}`)}>이전 장</button>
           <p className="text-muted">{prefs.readingMode === "paginated" ? `${page + 1} / ${pages.length}` : `${percent(progress?.overallProgress ?? 0)}%`}</p>
@@ -417,7 +426,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
         </div>
       </div>
 
-      <button className={`fixed right-4 top-16 grid h-11 w-11 place-items-center ${chrome ? "hidden" : ""}`} aria-label="도구 막대" onClick={() => setChrome(true)}>
+      <button className="reader-top fixed right-4 mt-12 grid h-11 w-11 place-items-center" aria-label="도구 막대" onClick={() => setChrome(true)} hidden={chrome}>
         <X className="opacity-0" />
       </button>
 

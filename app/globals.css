@@ -226,11 +226,28 @@ html[data-nav="back"] ::view-transition-new(.page) {
 }
 
 .nav-safe {
-  padding-bottom: calc(4.6rem + env(safe-area-inset-bottom));
+  padding-top: calc(max(env(safe-area-inset-top, 0px), 3.75rem) + 0.35rem);
+  padding-bottom: calc(4.6rem + env(safe-area-inset-bottom, 0px));
+}
+
+.reader-top { padding-top: max(env(safe-area-inset-top, 0px), 3.75rem); }
+.reader-bottom { padding-bottom: max(env(safe-area-inset-bottom, 0px), 1.25rem); }
+.reader-body {
+  padding-top: calc(max(env(safe-area-inset-top, 0px), 3.75rem) + 3.25rem);
+  padding-bottom: calc(max(env(safe-area-inset-bottom, 0px), 1.5rem) + 5.5rem);
 }
 
 @media (min-width: 1024px) {
-  .nav-safe { padding-bottom: 2.5rem; }
+  .nav-safe {
+    padding-top: 0;
+    padding-bottom: 2.5rem;
+  }
+  .reader-top { padding-top: 0; }
+  .reader-bottom { padding-bottom: 0; }
+  .reader-body {
+    padding-top: 4.5rem;
+    padding-bottom: 7rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
