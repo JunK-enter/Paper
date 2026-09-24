@@ -47,6 +47,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
   const [page, setPage] = useState(0);
   const [slide, setSlide] = useState(1);
   const [viewport, setViewport] = useState(800);
+  const [shellHeight, setShellHeight] = useState("100lvh");
 
   useEffect(() => {
     void loadChapters(bookId);
@@ -133,7 +134,11 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
   useEffect(() => {
     const update = () => {
       const view = window.visualViewport;
-      setViewport(view?.height ?? window.innerHeight);
+      const visible = view?.height ?? window.innerHeight;
+      const phone = /iPhone|iPad|iPod/.test(navigator.userAgent);
+      const screenHeight = phone && window.devicePixelRatio ? window.screen.height / window.devicePixelRatio : 0;
+      setViewport(visible);
+      setShellHeight(`${Math.ceil(Math.max(visible, window.innerHeight, screenHeight))}px`);
     };
     update();
     window.addEventListener("resize", update);
@@ -145,6 +150,18 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
       window.visualViewport?.removeEventListener("scroll", update);
     };
   }, []);
+
+  useEffect(() => {
+    const color = prefs.readingTheme === "dark" ? "#1e1e1b" : prefs.readingTheme === "sepia" ? "#f5ecd9" : "#fffefa";
+    const previousBody = document.body.style.background;
+    const previousHtml = document.documentElement.style.background;
+    document.body.style.background = color;
+    document.documentElement.style.background = color;
+    return () => {
+      document.body.style.background = previousBody;
+      document.documentElement.style.background = previousHtml;
+    };
+  }, [prefs.readingTheme]);
 
   useEffect(() => {
     if (!chapter || restored.current || prefs.readingMode !== "scroll") return;
@@ -287,10 +304,10 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
     <div
       data-theme={theme === "dark" ? "dark" : "light"}
       data-reading={theme === "sepia" ? "sepia" : undefined}
-      className="fixed inset-0 z-40 h-dvh min-h-dvh w-full bg-paper text-ink"
+      className="fixed inset-x-0 top-0 z-40 w-full bg-paper text-ink"
       style={{
-        height: "100dvh",
-        minHeight: "-webkit-fill-available",
+        height: shellHeight,
+        minHeight: "100lvh",
         ["--reading-font" as string]: font.stack,
         ["--reading-size" as string]: `${prefs.fontSize}px`,
         ["--reading-leading" as string]: String(prefs.lineHeight),
@@ -407,7 +424,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
         </div>
       ) : null}
 
-      <div className={`reader-top pointer-events-none fixed inset-x-0 top-0 z-20 bg-paper transition ${chrome ? "opacity-100" : "opacity-0"}`}>
+      <div className={`reader-top pointer-events-none absolute inset-x-0 top-0 z-20 bg-paper transition ${chrome ? "opacity-100" : "opacity-0"}`}>
         <div className="pointer-events-auto mx-auto flex max-w-3xl items-center justify-between px-3 py-2">
           <button className="grid h-11 w-11 place-items-center" aria-label="책으로" onClick={() => router.push(`/books/${bookId}`)}><ChevronLeft size={20} /></button>
           <p className="truncate px-3 text-sm">{book.title}</p>
@@ -418,7 +435,7 @@ export function ReaderScreen({ bookId, chapterId }: { bookId: string; chapterId:
         </div>
       </div>
 
-      <div className={`reader-bottom pointer-events-none fixed inset-x-0 bottom-0 z-20 bg-paper transition ${chrome ? "opacity-100" : "opacity-0"}`}>
+      <div className={`reader-bottom pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-paper transition ${chrome ? "opacity-100" : "opacity-0"}`}>
         <div className="pointer-events-auto mx-auto flex max-w-3xl items-center justify-between px-4 py-3 text-sm">
           <button className="min-h-11 disabled:opacity-30" disabled={!prev} onClick={() => prev && router.push(`/books/${bookId}/read/${prev.id}`)}>이전 장</button>
           <p className="text-muted">{prefs.readingMode === "paginated" ? `${page + 1} / ${pages.length}` : `${percent(progress?.overallProgress ?? 0)}%`}</p>
